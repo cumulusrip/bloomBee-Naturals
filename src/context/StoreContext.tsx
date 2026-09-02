@@ -163,6 +163,21 @@ const LOCAL_STORAGE_KEY_ADMIN_TOKEN = 'bloombee_admin_token_v2';
 const LOCAL_STORAGE_KEY_ADMIN_USER = 'bloombee_admin_user_v2';
 const LOCAL_STORAGE_KEY_CATEGORIES = 'bloombee_categories_v1';
 
+// localStorage has a hard per-origin quota (typically ~5-10MB). Every value
+// stored here is mirrored data — the real source of truth is either the
+// backend (products/reviews/orders/settings) or in-memory session state
+// (cart/wishlist). If a write ever exceeds the quota (e.g. the orders
+// cache growing over time), failing silently with a console warning is far
+// better than letting a QuotaExceededError bubble up and crash whatever
+// the user was doing at the time (like completing checkout).
+function safeSetItem(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (err) {
+    console.warn(`Could not save "${key}" to localStorage (storage full or unavailable):`, err);
+  }
+}
+
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // 1. Core State
   const [products, setProducts] = useState<Product[]>(() => {
@@ -221,7 +236,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const parsed: string[] = JSON.parse(saved);
     const alreadyCleaned = localStorage.getItem('bloombee_wishlist_seed_cleanup_v1');
     if (!alreadyCleaned) {
-      localStorage.setItem('bloombee_wishlist_seed_cleanup_v1', '1');
+      safeSetItem('bloombee_wishlist_seed_cleanup_v1', '1');
       return parsed.filter((id) => id !== 'prod-himalayan-honey-250g');
     }
     return parsed;
@@ -275,44 +290,52 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Sync to localStorage
   useEffect(() => {
-    localStorage.setItem(LOCAL_STORAGE_KEY_PRODUCTS, JSON.stringify(products));
+    safeSetItem(LOCAL_STORAGE_KEY_PRODUCTS, JSON.stringify(products));
   }, [products]);
 
   useEffect(() => {
-    localStorage.setItem(LOCAL_STORAGE_KEY_CATEGORIES, JSON.stringify(categories));
+    safeSetItem(LOCAL_STORAGE_KEY_CATEGORIES, JSON.stringify(categories));
   }, [categories]);
 
   useEffect(() => {
-    localStorage.setItem(LOCAL_STORAGE_KEY_CART, JSON.stringify(cart));
+    safeSetItem(LOCAL_STORAGE_KEY_CART, JSON.stringify(cart));
   }, [cart]);
 
+  // NOTE: `orders` holds the FULL global orders list fetched from the
+  // backend (every order, from every customer) — not just this browser's
+  // own orders. That list only grows over time and each order embeds a
+  // full snapshot of the products/variants purchased, so mirroring all of
+  // it into localStorage eventually exceeds the browser's storage quota
+  // (this is what was crashing checkout). The backend is already the real
+  // source of truth for this data, so we only keep a small, capped slice
+  // here purely as an offline/optimistic-UI fallback.
   useEffect(() => {
-    localStorage.setItem(LOCAL_STORAGE_KEY_ORDERS, JSON.stringify(orders));
+    safeSetItem(LOCAL_STORAGE_KEY_ORDERS, JSON.stringify(orders.slice(0, 30)));
   }, [orders]);
 
   useEffect(() => {
-    localStorage.setItem(LOCAL_STORAGE_KEY_SETTINGS, JSON.stringify(adminSettings));
+    safeSetItem(LOCAL_STORAGE_KEY_SETTINGS, JSON.stringify(adminSettings));
   }, [adminSettings]);
 
   useEffect(() => {
-    localStorage.setItem(LOCAL_STORAGE_KEY_EMAILS, JSON.stringify(emailLogs));
+    safeSetItem(LOCAL_STORAGE_KEY_EMAILS, JSON.stringify(emailLogs));
   }, [emailLogs]);
 
   useEffect(() => {
-    localStorage.setItem(LOCAL_STORAGE_KEY_INQUIRIES, JSON.stringify(wholesaleInquiries));
+    safeSetItem(LOCAL_STORAGE_KEY_INQUIRIES, JSON.stringify(wholesaleInquiries));
   }, [wholesaleInquiries]);
 
   useEffect(() => {
-    localStorage.setItem(LOCAL_STORAGE_KEY_REVIEWS, JSON.stringify(reviews));
+    safeSetItem(LOCAL_STORAGE_KEY_REVIEWS, JSON.stringify(reviews));
   }, [reviews]);
 
   useEffect(() => {
-    localStorage.setItem(LOCAL_STORAGE_KEY_GUEST_WISHLIST, JSON.stringify(guestWishlist));
+    safeSetItem(LOCAL_STORAGE_KEY_GUEST_WISHLIST, JSON.stringify(guestWishlist));
   }, [guestWishlist]);
 
   useEffect(() => {
     if (adminUser) {
-      localStorage.setItem(LOCAL_STORAGE_KEY_ADMIN_USER, JSON.stringify(adminUser));
+      safeSetItem(LOCAL_STORAGE_KEY_ADMIN_USER, JSON.stringify(adminUser));
     } else {
       localStorage.removeItem(LOCAL_STORAGE_KEY_ADMIN_USER);
     }
@@ -394,7 +417,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           fullName: data.user.fullName,
           role: 'admin',
         });
-        localStorage.setItem(LOCAL_STORAGE_KEY_ADMIN_TOKEN, data.token);
+        safeSetItem(LOCAL_STORAGE_KEY_ADMIN_TOKEN, data.token);
 
         const adm: User = {
           id: data.user.id || 'admin-master-01',

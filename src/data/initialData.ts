@@ -1,4 +1,4 @@
-import { Product, AdminSettings, Review, Order, ProductCategory, User } from '../types';
+import { Product, AdminSettings, Review, Order, ProductCategory, User } from '../types.js';
 
 export interface FSSAIProductCategoryConfig {
   id: ProductCategory;

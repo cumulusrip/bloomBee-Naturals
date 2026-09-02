@@ -1,6 +1,6 @@
 import express from 'express';
 import crypto from 'crypto';
-import { connectDB } from '../db/connect';
+import { connectDB } from '../db/connect.js';
 import {
   ProductModel,
   OrderModel,
@@ -8,9 +8,9 @@ import {
   B2BInquiryModel,
   ContactMessageModel,
   AdminSettingsModel,
-} from '../db/models';
-import { INITIAL_PRODUCTS, INITIAL_ORDERS, DEFAULT_ADMIN_SETTINGS, INITIAL_REVIEWS } from '../data/initialData';
-import { OrderStatus } from '../types';
+} from '../db/models.js';
+import { INITIAL_PRODUCTS, INITIAL_ORDERS, DEFAULT_ADMIN_SETTINGS, INITIAL_REVIEWS } from '../data/initialData.js';
+import { OrderStatus } from '../types.js';
 
 // Admin credentials — set these via environment variables in production
 // (see .env.example). Falls back to a single dev-only account so local

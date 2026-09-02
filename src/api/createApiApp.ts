@@ -98,6 +98,32 @@ export async function createApiApp(): Promise<express.Express> {
 
   const app = express();
 
+  // ==========================================
+  // ASYNC ERROR SAFETY NET
+  // Express 4 does NOT automatically catch a rejected promise thrown
+  // inside an `async (req, res) => {...}` route handler — that only
+  // happens in Express 5. Left unhandled, a dropped MongoDB connection
+  // or any other async error becomes an unhandled rejection, which
+  // crashes the whole Vercel serverless function invocation (returning
+  // a generic opaque 500 with no JSON body, which the frontend can't
+  // parse). This patches the route-registration methods once, up front,
+  // so every `async` handler below automatically forwards its errors to
+  // the error-handling middleware at the bottom of this file — no need
+  // to add try/catch to each individual route.
+  // ==========================================
+  (['get', 'post', 'put', 'patch', 'delete'] as const).forEach((method) => {
+    const original = (app as any)[method].bind(app);
+    (app as any)[method] = (path: string, ...handlers: express.RequestHandler[]) => {
+      const wrapped = handlers.map((handler) => {
+        if (handler.length >= 4) return handler; // leave error-handling middleware (err, req, res, next) alone
+        return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+          Promise.resolve(handler(req, res, next)).catch(next);
+        };
+      });
+      return original(path, ...wrapped);
+    };
+  });
+
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
 
@@ -586,14 +612,23 @@ export async function createApiApp(): Promise<express.Express> {
   });
 
   app.put('/api/settings', async (req, res) => {
-    let settings: any = await AdminSettingsModel.findOne();
-    if (!settings) {
-      settings = await AdminSettingsModel.create({ ...DEFAULT_ADMIN_SETTINGS, ...req.body });
-    } else {
-      settings.set({ ...settings.toObject(), ...req.body });
-      await settings.save();
+    try {
+      await connectDB(); // re-check/re-establish connection in case a warm serverless instance went stale
+      let settings: any = await AdminSettingsModel.findOne();
+      if (!settings) {
+        settings = await AdminSettingsModel.create({ ...DEFAULT_ADMIN_SETTINGS, ...req.body });
+      } else {
+        settings.set({ ...settings.toObject(), ...req.body });
+        await settings.save();
+      }
+      res.json({ success: true, settings: settings.toObject() });
+    } catch (err: any) {
+      console.error('Settings save failed:', err);
+      res.status(500).json({
+        success: false,
+        error: err?.message || 'Failed to save settings.',
+      });
     }
-    res.json({ success: true, settings: settings.toObject() });
   });
 
   // 8. Reviews Endpoints (Customer submission & Admin moderation)
@@ -641,6 +676,25 @@ export async function createApiApp(): Promise<express.Express> {
   app.delete('/api/reviews/:id', async (req, res) => {
     await ReviewModel.deleteOne({ id: req.params.id });
     res.json({ success: true, message: 'Review removed' });
+  });
+
+  // ==========================================
+  // GLOBAL ERROR HANDLER — must be registered last.
+  // None of the routes above have individual try/catch (other than
+  // settings/razorpay), so without this, any unexpected error (e.g. a
+  // dropped MongoDB connection on a Vercel serverless function) becomes
+  // an unhandled rejection that crashes the whole function invocation.
+  // That crash returns Vercel's generic HTML/plain-text 500 page instead
+  // of JSON, which the frontend can't parse — so real error messages get
+  // silently lost. This ensures every route always returns JSON.
+  // ==========================================
+  app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error(`Unhandled error on ${req.method} ${req.path}:`, err);
+    if (res.headersSent) return;
+    res.status(500).json({
+      success: false,
+      error: err?.message || 'Internal server error',
+    });
   });
 
   cachedApp = app;
